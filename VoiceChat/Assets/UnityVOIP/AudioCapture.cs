@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using CSCore;
 using CSCore.SoundIn;
 using CSCore.Streams;
@@ -71,6 +71,7 @@ namespace UnityVOIP
             capture.DataAvailable += Capture_DataAvailable;
 
             IWaveSource source = new SoundInSource(capture);
+
 
             dataSource = new PureDataSource(new WaveFormat(sampleRate, 8, 1), source.ToSampleSource());
             dataSource.OnDataRead += DataSource_OnDataRead;
@@ -308,9 +309,23 @@ namespace UnityVOIP
             {
                 int numRead = ActualRead(buffer, offset, count);
                 //int numRead = source.Read(buffer, offset, count);
+
+                
+
                 if (OnDataRead != null && numRead > 0)
                 {
-                    OnDataRead(buffer, offset, numRead);
+                    if (source.WaveFormat.Channels == 2)
+                    {
+                        for (int i = 0; i < numRead / 2; i++)
+                        {
+                            tempBuffer1[i] = (buffer[offset + i * 2] + buffer[offset + i * 2 + 1]) / 2.0f;
+                        }
+                        OnDataRead(tempBuffer1, 0, numRead/2);
+                    }
+                    else
+                    {
+                        OnDataRead(buffer, offset, numRead);
+                    }
                 }
                 return numRead;
             }
