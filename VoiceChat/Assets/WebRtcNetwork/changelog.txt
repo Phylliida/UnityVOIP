@@ -1,0 +1,30 @@
+Change Log
+    0.973
+            - BUG0006 fixed: Disposing of message buffers could cause stalling / exceptions
+
+    0.972   - Update WebRTC version to the same as Chrome 53    
+            - Stun server and signaling server can be changed in prefabs
+            - Bugfixes
+            
+    0.97    - Added support for Android and OSX (Video support isn't stable yet and might lead to crashes!)
+            - Clean up of the CallApp
+            
+    0.96    - Added support for broadcast / multicast networks 
+            - Added server node.js app (see server.zip)
+            
+    0.95    - Mayor rewrite
+                * Added support for the native library
+                * Updated factory and interfaces to support both: native and browser based WebRTC
+                * Replaced firebase signaling with a websocket signaling protocol using the same IBasicNetwork interface as the WebRTC network
+                * Moved the browser based library out of this project. webrtcnetworkplugin.txt contains the js code
+                    (based on a new typescript version)
+                
+                If you want to use the old browser version of WebRTC Network check out
+                https://github.com/devluz/webrtcnetwork
+                
+    0.9 - Initial release
+    
+    
+    
+    
+    

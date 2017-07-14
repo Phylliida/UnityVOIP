@@ -1,0 +1,1 @@
+Copy the AndroidManifest.xml to Assets\Plugins\Android to include it into android builds!
