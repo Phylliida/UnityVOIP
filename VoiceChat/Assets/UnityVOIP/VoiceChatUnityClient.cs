@@ -17,23 +17,46 @@ namespace UnityVOIP
         P2PClient client;
         Queue<float[]> packets = new Queue<float[]>(16);
 
+        System.Random random;
         void Start()
         {
             client = new P2PClient(serverURL, roomName);
             recorder = new AudioCapture(8000, 320);
             recorder.OnDataRead += Recorder_OnDataRead;
             client.OnReceivedMessage += Client_OnReceivedMessage;
+
+            random = new System.Random();
+            myId = (int)random.Next();
+
+            byte[] bytes = BitConverter.GetBytes(myId);
+            id1 = bytes[0];
+            id2 = bytes[1];
+            id3 = bytes[2];
+            id4 = bytes[3];
         }
 
         bool isRecording = false;
 
-        private void Recorder_OnDataRead(float[] data)
+        byte id1, id2, id3, id4;
+        int myId;
+
+        byte isSpeechId = 10;
+
+        private void Recorder_OnDataRead(float[] data, int offset, int len)
         {
             if (!isRecording)
             {
-                return;
+                //return;
             }
-            packets.Enqueue(data);
+            ToShortArray(data, outBufferShort, offset, len);
+            int resLen = speexEnc.Encode(outBufferShort, 0, len, outBuffer, 5, 5*320);
+            outBuffer[0] = isSpeechId;
+            outBuffer[1] = id1;
+            outBuffer[2] = id2;
+            outBuffer[3] = id3;
+            outBuffer[4] = id4;
+            client.SendMessageToAll(outBuffer, 0, resLen, true);
+
         }
         
 
@@ -41,12 +64,26 @@ namespace UnityVOIP
         NSpeex.SpeexEncoder speexEnc = new NSpeex.SpeexEncoder(NSpeex.BandMode.Narrow);
         private void Client_OnReceivedMessage(Byn.Net.NetworkEvent message)
         {
-            int resLen = speexDec.Decode(message.MessageData.Buffer, message.MessageData.Offset, message.MessageData.ContentLength, outBufferShort, 0, false);
-            ToFloatArray(outBufferShort, outBufferFloat, resLen);
-            player.PlayAudio(outBufferFloat, 0, resLen);
+            if (message.MessageData.ContentLength < 5)
+            {
+                return;
+            }
+            int offset = message.MessageData.Offset;
+            byte[] messageBuffer = message.MessageData.Buffer;
+
+            int messageId = messageBuffer[offset];
+            int pid = BitConverter.ToInt32(messageBuffer, offset + 1);
+
+            offset += 5;
+
+            if (messageId == isSpeechId)
+            {
+                int resLen = speexDec.Decode(message.MessageData.Buffer, offset, message.MessageData.ContentLength, outBufferShort, 0, false);
+                ToFloatArray(outBufferShort, outBufferFloat, resLen);
+                int bean = message.ConnectionId.id;
+                player.PlayAudio(outBufferFloat, 0, resLen, pid);
+            }
         }
-
-
 
         public void OnDestroy()
         {
@@ -63,11 +100,11 @@ namespace UnityVOIP
         short[] outBufferShort = new short[100000];
         float[] outBufferFloat = new float[100000];
 
-        static void ToShortArray(float[] input, short[] output)
+        static void ToShortArray(float[] input, short[] output, int offset, int len)
         {
-            for (int i = 0; i < input.Length; ++i)
+            for (int i = 0; i < len; ++i)
             {
-                output[i] = (short)Mathf.Clamp((int)(input[i] * 32767.0f), short.MinValue, short.MaxValue);
+                output[i] = (short)Mathf.Clamp((int)(input[i+ offset] * 32767.0f), short.MinValue, short.MaxValue);
             }
         }
 
@@ -79,18 +116,20 @@ namespace UnityVOIP
             }
         }
 
+        void FixedUpdate()
+        {
+            recorder.Poll();
+            client.UpdateClient();
+        }
+
         private void Update()
         {
             isRecording = Input.GetKey(KeyCode.P);
-            client.UpdateClient();
             if (client.peers.Count > 0)
             {
-                while (packets.Count > 0)
+                //while(packets.Count > 2)
                 {
-                    float[]  curPacket = packets.Dequeue();
-                    ToShortArray(curPacket, outBufferShort);
-                    int resLen = speexEnc.Encode(outBufferShort, 0, curPacket.Length, outBuffer, 0, outBuffer.Length);
-                    client.SendMessageToAll(outBuffer, 0, resLen, true);
+                    //packets.Dequeue();
                 }
             }
         }

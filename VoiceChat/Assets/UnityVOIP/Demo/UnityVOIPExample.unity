@@ -199,13 +199,13 @@ MonoBehaviour:
   m_PrefabParentObject: {fileID: 0}
   m_PrefabInternal: {fileID: 0}
   m_GameObject: {fileID: 392286490}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: bf25b0bf4fd3b6049939e4dfa78bd975, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   serverURL: wss://nameless-scrubland-88927.herokuapp.com
-  roomName: voicechattest
+  roomName: voicechattest22
 --- !u!114 &392286498
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -218,7 +218,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   serverURL: wss://nameless-scrubland-88927.herokuapp.com
-  roomName: voicechattest
+  roomName: voicechattest22
   player: {fileID: 392286496}
 --- !u!1 &1570744208
 GameObject:

@@ -65,12 +65,13 @@ namespace UnityVOIP
             resSamples = new float[this.sampleSize];
             var ayy = new MMDeviceEnumerator();
             // This uses the wasapi api to get any sound data played by the computer
-            capture = new WasapiCapture(false, AudioClientShareMode.Shared);
+            capture = new WasapiCapture(false, AudioClientShareMode.Shared, 100);
             capture.Device = ayy.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Multimedia);
             capture.Initialize();
             capture.DataAvailable += Capture_DataAvailable;
 
             IWaveSource source = new SoundInSource(capture);
+
 
             dataSource = new PureDataSource(new WaveFormat(sampleRate, 8, 1), source.ToSampleSource());
             dataSource.OnDataRead += DataSource_OnDataRead;
@@ -80,7 +81,7 @@ namespace UnityVOIP
             capture.Start();
         }
 
-        public delegate void OnDataReadCallback(float[] data);
+        public delegate void OnDataReadCallback(float[] data, int offset, int len);
 
         public event OnDataReadCallback OnDataRead;
 
@@ -88,6 +89,42 @@ namespace UnityVOIP
         float[] remainingSamples = new float[100000];
         int numRemainingSamples = 0;
         float[] resSamples;
+
+        public void Poll()
+        {
+            if (numRemainingSamples >= SampleSize)
+            {
+                //Buffer.BlockCopy(remainingSamples, 0, resSamples, 0, SampleSize * sizeof(float));
+
+                int fadeSize = 10;
+                fadeSize = Mathf.Min(fadeSize, SampleSize / 2 - 1);
+                if (fadeSize > 1)
+                {
+                    int startInd = 0 + SampleSize - fadeSize;
+                    for (int i = 0; i < fadeSize; i++)
+                    {
+                        float fade = 1 - (i / (float)(fadeSize - 1));
+                        remainingSamples[startInd + i] *= fade * fade;
+                        float startFade = 1 - fade;
+                        remainingSamples[i] *= startFade * startFade;
+                    }
+                }
+
+                if (OnDataRead != null)
+                {
+                    OnDataRead(remainingSamples, 0, SampleSize);
+                }
+                int numLeft = numRemainingSamples - SampleSize;
+                lock (cleanupLock)
+                {
+                    if (numLeft > 0)
+                    {
+                        Buffer.BlockCopy(remainingSamples, SampleSize * sizeof(float), remainingSamples, 0, numLeft * sizeof(float));
+                    }
+                    numRemainingSamples -= SampleSize;
+                }
+            }
+        }
 
         private void DataSource_OnDataRead(float[] data, int dataOffset, int len)
         {
@@ -109,24 +146,25 @@ namespace UnityVOIP
                         {
                             return;
                         }
-                        Buffer.BlockCopy(data, 0, remainingSamples, numRemainingSamples * sizeof(float), len * sizeof(float));
-                        numRemainingSamples += len;
 
-                        while (numRemainingSamples >= SampleSize)
+
+                        int fadeSize = 7;
+                        fadeSize = Mathf.Min(fadeSize, len / 2 - 1);
+                        if (fadeSize > 1)
                         {
-                            Buffer.BlockCopy(remainingSamples, 0, resSamples, 0, SampleSize * sizeof(float));
-
-                            if (OnDataRead != null)
+                            int startInd = dataOffset + len - fadeSize;
+                            for (int i = 0; i < fadeSize; i++)
                             {
-                                OnDataRead(resSamples);
+                                float fade = 1 - (i / (float)(fadeSize - 1));
+                                data[startInd + i] *= fade * fade;
+                                float startFade = 1 - fade;
+                                data[dataOffset + i] *= startFade * startFade;
                             }
-                            int numLeft = numRemainingSamples - SampleSize;
-                            if (numLeft > 0)
-                            {
-                                Buffer.BlockCopy(remainingSamples, SampleSize * sizeof(float), remainingSamples, 0, numLeft * sizeof(float));
-                            }
-                            numRemainingSamples -= SampleSize;
                         }
+
+
+                        Buffer.BlockCopy(data, dataOffset*sizeof(float), remainingSamples, numRemainingSamples * sizeof(float), len * sizeof(float));
+                        numRemainingSamples += len;
                     }
                 }
             }
@@ -176,13 +214,11 @@ namespace UnityVOIP
                     return;
                 }
 
-                lock (cleanupLock)
+               
+                if (!cleanedUp)
                 {
-                    if (!cleanedUp)
-                    {
-                        byte[] curData = new byte[e.ByteCount];
-                        finalSource.Read(curData, 0, e.ByteCount);
-                    }
+                    byte[] curData = new byte[e.ByteCount];
+                    finalSource.Read(curData, 0, e.ByteCount);
                 }
             }
 
@@ -308,10 +344,25 @@ namespace UnityVOIP
             {
                 int numRead = ActualRead(buffer, offset, count);
                 //int numRead = source.Read(buffer, offset, count);
+
+                
+
                 if (OnDataRead != null && numRead > 0)
                 {
-                    OnDataRead(buffer, offset, numRead);
+                    if (source.WaveFormat.Channels == 2)
+                    {
+                        for (int i = 0; i < numRead / 2; i++)
+                        {
+                            tempBuffer1[i] = (buffer[offset + i * 2] + buffer[offset + i * 2 + 1]) / 2.0f;
+                        }
+                        OnDataRead(tempBuffer1, 0, numRead/2);
+                    }
+                    else
+                    {
+                        OnDataRead(buffer, offset, numRead);
+                    }
                 }
+                return count;
                 return numRead;
             }
 
@@ -348,13 +399,12 @@ namespace UnityVOIP
                         }
                     }
                     int numOurSamples = (int)Mathf.Round((res * (float)mySampleRate / sourceSampleRate));
-                    res = src_simple_plain(tempBuffer1, tempBuffer2, res, numOurSamples, (float)mySampleRate / sourceSampleRate, quality, source.WaveFormat.Channels);
+                    res = src_simple_plain(tempBuffer1, tempBuffer2, res, numOurSamples, (float)mySampleRate / sourceSampleRate, ConverterQuality.SRC_SINC_FASTEST, source.WaveFormat.Channels);
                     if (res > count)
                     {
                         res = count;
                     }
-                    Buffer.BlockCopy(tempBuffer2, 0, buffer, offset, res * sizeof(float));
-                    lastThing = buffer[offset + res - 1];
+                    Buffer.BlockCopy(tempBuffer2, 0, buffer, offset*sizeof(float), res * sizeof(float));
                 }
                 catch (Exception e)
                 {
@@ -370,6 +420,6 @@ namespace UnityVOIP
             }
         }
 
-        public ConverterQuality quality = ConverterQuality.SRC_SINC_FASTEST;
+        public ConverterQuality quality = ConverterQuality.SRC_SINC_BEST_QUALITY;
     }
 }

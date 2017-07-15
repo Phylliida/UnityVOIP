@@ -2,6 +2,7 @@
 using CSCore.CoreAudioAPI;
 using CSCore.SoundOut;
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using UnityEngine;
 
@@ -9,16 +10,22 @@ namespace UnityVOIP
 {
     public class WritableAudioPlayer : MonoBehaviour
     {
-        WasapiOut output;
-        WritablePureDataSource outSource;
+        Dictionary<int, WasapiOut> outputs;
+        Dictionary<int, WritablePureDataSource> sources;
 
         public int inputSampleRate = 8000;
 
         bool cleanedUp = false;
         object cleanupLock = new object();
 
+        private void Start()
+        {
+            outputs = new Dictionary<int, WasapiOut>();
+            sources = new Dictionary<int, WritablePureDataSource>();
+
+        }
         // Use this for initialization
-        void Start()
+        void MakeOutput(out WasapiOut output, out WritablePureDataSource outSource)
         {
             var ayy = new MMDeviceEnumerator();
             output = new WasapiOut(false, AudioClientShareMode.Shared, 100);
@@ -30,25 +37,44 @@ namespace UnityVOIP
             output.Play();
         }
 
-        public float TimeUntilDone
+        public float TimeUntilDone(int id)
         {
-            get
+            if (outputs.ContainsKey(id))
             {
-                return outSource.numUnprocessed / (float)outSource.waveFormatIn.SampleRate;
+                return sources[id].numUnprocessed / (float)sources[id].waveFormatIn.SampleRate;
             }
-            private set
+            else
             {
-
+                throw new ArgumentException("Id " + id + " does not have an output yet");
             }
         }
 
-        public void PlayAudio(float[] audio, int offset, int len)
+
+        public void PlayAudio(float[] audio, int offset, int len, int audioId)
         {
-            outSource.Write(audio, offset, len);
+            lock (cleanupLock)
+            {
+                if (!cleanedUp)
+                {
+                    if (outputs.ContainsKey(audioId))
+                    {
+                        sources[audioId].Write(audio, offset, len);
+                    }
+                    else
+                    {
+                        WasapiOut output;
+                        WritablePureDataSource source;
+                        MakeOutput(out output, out source);
+                        sources[audioId] = source;
+                        outputs[audioId] = output;
+                        source.Write(audio, offset, len);
+                    }
+                }
+            }
         }
-        public void PlayAudio(float[] audio)
+        public void PlayAudio(float[] audio, int audioId)
         {
-            PlayAudio(audio, 0, audio.Length);
+            PlayAudio(audio, 0, audio.Length, audioId);
         }
 
         void Cleanup()
@@ -58,8 +84,10 @@ namespace UnityVOIP
                 if (!cleanedUp)
                 {
                     cleanedUp = true;
-                    if (output != null)
+
+                    foreach (KeyValuePair<int, WasapiOut> keyOutput in outputs)
                     {
+                        WasapiOut output = keyOutput.Value;
                         if (output.PlaybackState == PlaybackState.Paused)
                         {
                             output.Stop();
@@ -151,6 +179,10 @@ namespace UnityVOIP
             this.waveFormatIn = waveFormatIn;
             _WaveFormat = waveFormatOut;
             this.waveFormatOut = waveFormatOut;
+
+            dats = new Queue<float[]>();
+            offsets = new Queue<int>();
+            lens = new Queue<int>();
         }
 
 
@@ -162,8 +194,12 @@ namespace UnityVOIP
         float[] tempBuffer2 = new float[80000 * 20];
         float[] tempBuffer3 = new float[80000 * 20];
 
-        float[] unprocessedAudio = new float[80000 * 20];
+        float[] unprocessedAudio = new float[80000*20];
         public int numUnprocessed = 0;
+
+        Queue<float[]> dats;
+        Queue<int> offsets;
+        Queue<int> lens;
 
         private void AddToUnprocessedData(float[] data, int offset, int numBytes, int inChannels)
         {
@@ -190,6 +226,12 @@ namespace UnityVOIP
             Buffer.BlockCopy(data, offset * sizeof(float), unprocessedAudio, numUnprocessed * sizeof(float), numBytes * sizeof(float));
 
             numUnprocessed += numBytes;
+
+            while (numUnprocessed > 320*6)
+            {
+                Buffer.BlockCopy(data, 320 * sizeof(float), data, 0, numUnprocessed - 320);
+                numUnprocessed -= 320;
+            }
         }
 
         public void Write(float[] buffer, int offset, int count)
@@ -197,6 +239,19 @@ namespace UnityVOIP
             lock (unprocessedAudio)
             {
                 AddToUnprocessedData(buffer, offset, count, waveFormatIn.Channels);
+                /*
+                dats.Enqueue(buffer);
+                offsets.Enqueue(offset);
+                lens.Enqueue(count);
+
+                while (dats.Count > 100)
+                {
+                    dats.Dequeue();
+                    offsets.Dequeue();
+                    lens.Dequeue();
+                }
+                */
+
             }
         }
 
@@ -261,7 +316,7 @@ namespace UnityVOIP
                     }
                 }
                 int numOurSamples = (int)Mathf.Round((res * (float)mySampleRate / sourceSampleRate));
-                res = src_simple_plain(tempBuffer1, tempBuffer2, res, numOurSamples, (float)mySampleRate / sourceSampleRate, quality, waveFormatOut.Channels);
+                res = src_simple_plain(tempBuffer1, tempBuffer2, res, numOurSamples, (float)mySampleRate / sourceSampleRate, ConverterQuality.SRC_SINC_FASTEST, waveFormatOut.Channels);
                 if (res > count)
                 {
                     res = count;
@@ -271,26 +326,30 @@ namespace UnityVOIP
             catch (Exception e)
             {
                 Debug.Log("failed read: " + e.Message);
+                return count;
             }
-            int fadeSize = 200;
-            fadeSize = Mathf.Min(fadeSize, res - 1);
-            if (res > fadeSize)
+            int fadeSize = 100;
+            fadeSize = Mathf.Min(fadeSize, res/2 - 1);
+            if (fadeSize > 1)
             {
                 int startInd = offset + res - fadeSize;
                 for (int i = 0; i < fadeSize; i++)
                 {
                     float fade = 1 - (i / (float)(fadeSize - 1));
-                    buffer[startInd + i] *= fade;
+                    buffer[startInd + i] *= fade* fade;
                     float startFade = 1 - fade;
-                    buffer[offset + i] *= startFade;
+                    buffer[offset + i] *= startFade* startFade;
                 }
             }
-            else
+            if (res < count)
             {
-                Debug.Log("not thing");
+                for (int i = res; i < count; i++)
+                {
+                    buffer[offset+i] = 0;
+                }
             }
-
-            return Mathf.Max(res, 2);
+            return count;
+            return Mathf.Min(Mathf.Max(res, 20), count);
         }
 
         public void Dispose()
