@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using CSCore;
 using CSCore.SoundIn;
 using CSCore.Streams;
